@@ -1,0 +1,32 @@
+{
+  "schema_version": 1,
+  "skills": [
+    {
+      "name": "bounded-review-supervisor",
+      "path": "skills/bounded-review-supervisor",
+      "category": "code-quality",
+      "origin": "self-authored",
+      "portability": "codex-specific",
+      "depends_on": ["code-review-fix-loop"],
+      "bundles": ["review-workflows"]
+    },
+    {
+      "name": "code-review-fix-loop",
+      "path": "skills/code-review-fix-loop",
+      "category": "code-quality",
+      "origin": "self-authored",
+      "portability": "codex-specific",
+      "depends_on": [],
+      "bundles": ["review-workflows"]
+    },
+    {
+      "name": "local-diff-quality-supervisor",
+      "path": "skills/local-diff-quality-supervisor",
+      "category": "code-quality",
+      "origin": "self-authored",
+      "portability": "codex-specific",
+      "depends_on": ["code-review-fix-loop"],
+      "bundles": ["review-workflows"]
+    }
+  ]
+}

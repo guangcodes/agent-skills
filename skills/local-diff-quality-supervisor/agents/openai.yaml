@@ -1,0 +1,4 @@
+interface:
+  display_name: "Local Diff Quality Supervisor"
+  short_description: "将现有本地 Git diff 收敛为功能完整、零已知 bug 的模块"
+  default_prompt: "Use $local-diff-quality-supervisor to review, repair, validate, and stop at a verified READY_LOCAL_DIFF without committing or pushing."

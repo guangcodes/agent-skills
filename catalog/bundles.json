@@ -1,0 +1,18 @@
+{
+  "schema_version": 1,
+  "bundles": [
+    {
+      "name": "review-workflows",
+      "version": "0.1.0",
+      "description": "Bounded local code review, repair, and delivery-readiness workflows.",
+      "skills": [
+        "code-review-fix-loop",
+        "local-diff-quality-supervisor",
+        "bounded-review-supervisor"
+      ],
+      "adapters": {
+        "codex": "adapters/codex/review-workflows/manifest.json"
+      }
+    }
+  ]
+}
