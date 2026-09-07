@@ -34,8 +34,16 @@ class SensitivePathMatrixTests(unittest.TestCase):
             "client_secret.txt": True,
             "clientSecret.txt": True,
             "APIKey.json": True,
+            "APIKeys.json": True,
+            "apikeys.json": True,
+            "access_key.json": True,
+            "access_keys.json": True,
+            "accessKey.json": True,
+            "private_keys.json": True,
             "password_backup.json": True,
             "secret_old.txt": True,
+            "server.pem.bak": True,
+            "id_rsa.old": True,
             "credentials/prod.json": True,
             "src/tokenizer.py": False,
             "src/token_bucket.py": False,
@@ -126,6 +134,21 @@ class ScreenedDiffMatrixTests(unittest.TestCase):
 
         self.assertEqual(result, b"")
         run_git.assert_not_called()
+
+
+class GitlinkSnapshotMatrixTests(unittest.TestCase):
+    def test_changed_gitlinks_are_rejected(self) -> None:
+        with self.assertRaisesRegex(ValueError, "changed gitlinks"):
+            SUPERVISOR_STATE.reject_changed_gitlinks(
+                ["src/app.py", "vendor/module"],
+                ["vendor/module"],
+            )
+
+    def test_unchanged_gitlinks_do_not_block_other_changes(self) -> None:
+        SUPERVISOR_STATE.reject_changed_gitlinks(
+            ["src/app.py"],
+            ["vendor/module"],
+        )
 
 
 class NativeOutputGrammarMatrixTests(unittest.TestCase):

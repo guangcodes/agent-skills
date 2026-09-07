@@ -11,7 +11,7 @@ SPEC.loader.exec_module(SUPERVISOR_STATE)
 
 
 class ReviewCommandTests(unittest.TestCase):
-    def test_uncommitted_review_does_not_also_pass_custom_prompt(self) -> None:
+    def test_initial_review_uses_a_static_complete_diff_prompt(self) -> None:
         self.assertTrue(
             hasattr(SUPERVISOR_STATE, "build_review_command"),
             "review command construction must be independently testable",
@@ -26,12 +26,12 @@ class ReviewCommandTests(unittest.TestCase):
             command[:5],
             ["/usr/local/bin/codex", "exec", "--sandbox", "read-only", "review"],
         )
-        self.assertIn("--uncommitted", command)
-        self.assertNotIn(
-            "Perform a read-only review of all current staged, unstaged, and untracked changes. ",
-            command,
-        )
-        self.assertEqual(command[-2:], ["--output-last-message", "/tmp/review-final.json"])
+        self.assertNotIn("--uncommitted", command)
+        self.assertEqual(command[-3:-1], ["--output-last-message", "/tmp/review-final.json"])
+        prompt = command[-1]
+        self.assertIn("read-only static review", prompt)
+        self.assertIn("all current staged, unstaged, and untracked changes", prompt)
+        self.assertIn("Do not run test, lint, typecheck, build", prompt)
 
     def test_sensitive_path_filter_covers_common_credential_and_cookie_names(self) -> None:
         sensitive_paths = (
@@ -40,6 +40,8 @@ class ReviewCommandTests(unittest.TestCase):
             ".pypirc",
             "cookies.json",
             "api-key.txt",
+            "access_key.json",
+            "accessKey.json",
             ".aws/config",
             ".ssh/config",
             ".docker/config.json",
@@ -56,6 +58,8 @@ class ReviewCommandTests(unittest.TestCase):
             ".environment",
             ".env/config.yaml",
             "backup/.env.production/config.yaml",
+            "server.pem.bak",
+            "id_rsa.old",
         )
 
         for relative in sensitive_paths:

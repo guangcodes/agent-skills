@@ -1,0 +1,4 @@
+interface:
+  display_name: "Review-Fix Alignment Supervisor"
+  short_description: "在修复不收敛时检查需求偏离、功能缺口与设计发散"
+  default_prompt: "Use $review-fix-alignment-supervisor when the current code-review-fix-loop is not converging; safely screen and inspect the complete current diff and latest review checkpoint, then decide whether to continue, redirect, ask me one decision question, or stop as blocked."
