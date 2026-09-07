@@ -1,4 +1,4 @@
 interface:
   display_name: "Code Review Fix Loop"
-  short_description: "首次全量、修复后 focused 的本地 review 修复闭环"
-  default_prompt: "使用 $code-review-fix-loop 处理当前本地 review findings：没有现成 finding 时先做一次只读全量 review，按当前代码事实核对 finding，合并同根因修复，修复后只做 focused review；验证服从仓库规则与 test_mode，deep 每批运行直接相关测试并在 review 收敛后执行一次完整本地验证矩阵；低频等待 reviewer，最多执行 5 个修复批次，并报告 review 覆盖、验证状态、阻塞与未验证边界。"
+  short_description: "首次全量、修复后累计全量的本地 review 修复闭环"
+  default_prompt: "使用 $code-review-fix-loop 处理当前本地 review findings：每个产生持久化修改的修复批次后，对冻结基线到当前工作树的完整累计 diff 做一次只读静态 review；修复轮次内不由本 Skill 运行自动化测试，收敛或达到五轮上限时对累计修改执行至多一次默认 light 的退出验证；只有我明确要求时才使用 deep，并将测试问题及 deep_not_requested 风险写入台账，同时保留可供 bounded-review-fix-supervisor 直接接管的结构化检查点。"

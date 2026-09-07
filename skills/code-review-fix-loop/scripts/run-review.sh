@@ -1,12 +1,23 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
+export GIT_NO_LAZY_FETCH=1
+export GIT_TERMINAL_PROMPT=0
+
 dry_run=false
 quiet_events=false
 output_path=""
 scope_file=""
 caller_dir=$(pwd -P)
 original_review_argv=("$@")
+
+require_committed_head() {
+  local root=$1
+  git -C "$root" rev-parse --verify 'HEAD^{commit}' >/dev/null 2>&1 || {
+    printf 'review mode requires a Git repository with an initial commit\n' >&2
+    exit 2
+  }
+}
 
 while (( $# > 0 )); do
   case "$1" in
@@ -39,6 +50,7 @@ mode=${1:-}
   printf 'usage: run-review.sh [--dry-run] [--quiet-events] [--output <path>] uncommitted\n' >&2
   printf '       run-review.sh [--dry-run] [--quiet-events] [--output <path>] base <branch>\n' >&2
   printf '       run-review.sh [--dry-run] [--quiet-events] [--output <path>] commit <sha>\n' >&2
+  printf '       run-review.sh [--dry-run] [--quiet-events] [--output <path>] cumulative <baseline-revision>\n' >&2
   printf '       run-review.sh [--dry-run] [--quiet-events] [--output <path>] --scope-file <path> paths <path> [<path> ...]\n' >&2
   exit 2
 }
@@ -53,7 +65,7 @@ if [[ -n "$output_path" && "$output_path" != /* ]]; then
   output_path="$caller_dir/$output_path"
 fi
 
-args=(codex exec review --ephemeral --json)
+args=(codex exec --sandbox read-only review --ephemeral --json)
 if [[ -n "$output_path" ]]; then
   args+=(--output-last-message "$output_path")
 fi
@@ -65,6 +77,7 @@ case "$mode" in
     [[ -z "$scope_file" ]] || { printf '%s\n' '--scope-file is only valid with paths mode' >&2; exit 2; }
     command -v git >/dev/null 2>&1 || { printf 'git is not installed or not on PATH\n' >&2; exit 127; }
     repo_root=$(git rev-parse --show-toplevel 2>/dev/null) || { printf 'uncommitted mode requires a Git repository\n' >&2; exit 2; }
+    require_committed_head "$repo_root"
     prompt="$readonly_rules Review all current staged, unstaged, and untracked changes in this repository. Use git status and the appropriate cached and working-tree diffs to establish the complete scope."
     args+=("$prompt")
     ;;
@@ -116,12 +129,34 @@ case "$mode" in
     prompt="$readonly_rules Review only the changes introduced by commit $commit_sha. Use git show for that exact commit and do not include working-tree or unrelated history changes."
     args+=("$prompt")
     ;;
+  cumulative)
+    [[ -z "$scope_file" ]] || { printf '%s\n' '--scope-file is only valid with paths mode' >&2; exit 2; }
+    target=${1:-}
+    [[ -n "$target" ]] || { printf 'cumulative mode requires a baseline revision\n' >&2; exit 2; }
+    shift
+    case "$target" in
+      -*|*$'\n'*|*$'\r'*|*$'\t'*)
+        printf 'cumulative mode requires a safe baseline revision: %s\n' "$target" >&2
+        exit 2
+        ;;
+    esac
+    command -v git >/dev/null 2>&1 || { printf 'git is not installed or not on PATH\n' >&2; exit 127; }
+    repo_root=$(git rev-parse --show-toplevel 2>/dev/null) || { printf 'cumulative mode requires a Git repository\n' >&2; exit 2; }
+    require_committed_head "$repo_root"
+    baseline_tree=$(git -C "$repo_root" rev-parse --verify "${target}^{tree}" 2>/dev/null) || {
+      printf 'cumulative mode cannot resolve baseline revision: %s\n' "$target" >&2
+      exit 2
+    }
+    prompt="$readonly_rules Review the complete current code diff from frozen baseline tree $baseline_tree through the current working tree. Include all committed changes after that baseline through HEAD and all current staged, unstaged, and untracked changes as one cumulative change set. Use the baseline diff and git status to establish the complete scope. You may read tracked direct dependencies when required for context, but do not review baseline-existing defects or unrelated history."
+    args+=("$prompt")
+    ;;
   paths)
     (( $# > 0 )) || { printf 'paths mode requires at least one changed path\n' >&2; exit 2; }
     [[ -n "$scope_file" ]] || { printf 'paths mode requires --scope-file\n' >&2; exit 2; }
     [[ -f "$scope_file" ]] || { printf 'scope file does not exist: %s\n' "$scope_file" >&2; exit 2; }
     command -v git >/dev/null 2>&1 || { printf 'git is not installed or not on PATH\n' >&2; exit 127; }
     repo_root=$(git rev-parse --show-toplevel 2>/dev/null) || { printf 'paths mode requires a Git repository\n' >&2; exit 2; }
+    require_committed_head "$repo_root"
 
     allowed_paths=()
     while IFS= read -r allowed_path || [[ -n "$allowed_path" ]]; do
@@ -191,6 +226,48 @@ esac
   exit 2
 }
 
+repo_root=$(cd "$repo_root" && pwd -P)
+if [[ -n "$output_path" ]]; then
+  output_parent=$(dirname "$output_path")
+  [[ -d "$output_parent" ]] || {
+    printf 'review output parent directory does not exist: %s\n' "$output_parent" >&2
+    exit 2
+  }
+  output_parent=$(cd "$output_parent" && pwd -P)
+  output_path="$output_parent/$(basename "$output_path")"
+  output_in_system_temp=false
+  for review_temp_candidate in "${TMPDIR:-}" /tmp /private/tmp; do
+    [[ -n "$review_temp_candidate" && -d "$review_temp_candidate" ]] || continue
+    review_temp_root=$(cd "$review_temp_candidate" && pwd -P)
+    case "$output_path" in
+      "$review_temp_root"/*)
+        output_in_system_temp=true
+        break
+        ;;
+    esac
+  done
+  $output_in_system_temp || {
+    printf 'review output and sidecar artifacts must be under a system temporary directory: %s\n' "$output_path" >&2
+    exit 2
+  }
+  case "$output_path" in
+    "$repo_root"|"$repo_root"/*)
+      printf 'review output and sidecar artifacts must be outside the Git worktree: %s\n' "$output_path" >&2
+      exit 2
+      ;;
+  esac
+  for artifact_path in \
+    "$output_path" \
+    "${output_path}.events.jsonl" \
+    "${output_path}.stderr.log" \
+    "${output_path}.metrics"; do
+    [[ ! -L "$artifact_path" ]] || {
+      printf 'review output artifacts must not be symlinks: %s\n' "$artifact_path" >&2
+      exit 2
+    }
+  done
+fi
+
 if $dry_run; then
   cd "$repo_root"
   printf '%q ' "${args[@]}"
@@ -220,9 +297,9 @@ unset claimed_origin_ref
 
 if [[ -n "$origin_ref" ]]; then
   args=(
-    codex exec review
+    codex exec --sandbox read-only review
     -c "shell_environment_policy.set.CODEX_NOTIFY_ORIGIN_REF=\"$origin_ref\""
-    "${args[@]:3}"
+    "${args[@]:5}"
   )
 fi
 unset origin_ref

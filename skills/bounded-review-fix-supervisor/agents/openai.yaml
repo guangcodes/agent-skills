@@ -1,0 +1,7 @@
+interface:
+  display_name: "Bounded Review-Fix Supervisor"
+  short_description: "在 active Goal 中经纠偏检查串联最多四个五轮修复窗口"
+  default_prompt: "Use $bounded-review-fix-supervisor in this active Goal to continue the local review-fix campaign across bounded five-round windows, first adopting any valid code-review-fix-loop result for the current diff, then running an alignment checkpoint before each additional window."
+
+policy:
+  allow_implicit_invocation: false

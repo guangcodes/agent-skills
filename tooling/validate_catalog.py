@@ -11,6 +11,7 @@ from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
 NAME_RE = re.compile(r"^[a-z0-9]+(?:-[a-z0-9]+)*$")
+VERSION_RE = re.compile(r"^\d+\.\d+\.\d+$")
 
 
 def load_json(path: Path) -> dict:
@@ -36,6 +37,8 @@ def main() -> int:
     if len(names) != len(set(names)):
         errors.append("catalog/skills.json contains duplicate names")
 
+    legacy_owners: dict[str, str] = {}
+
     for entry in skill_entries:
         name = entry.get("name")
         rel_path = entry.get("path")
@@ -45,6 +48,25 @@ def main() -> int:
         if rel_path != f"skills/{name}":
             errors.append(f"{name}: path must be skills/{name}")
             continue
+        renamed_from = entry.get("renamed_from", [])
+        if not isinstance(renamed_from, list) or any(
+            not isinstance(item, str) or not NAME_RE.fullmatch(item)
+            for item in renamed_from
+        ):
+            errors.append(f"{name}: renamed_from must contain valid skill names")
+            renamed_from = []
+        if len(renamed_from) != len(set(renamed_from)):
+            errors.append(f"{name}: renamed_from contains duplicates")
+        for legacy_name in renamed_from:
+            if legacy_name in names:
+                errors.append(f"{name}: renamed_from collides with current skill {legacy_name}")
+            previous_owner = legacy_owners.get(legacy_name)
+            if previous_owner is not None:
+                errors.append(
+                    f"{name}: renamed_from {legacy_name} is already owned by {previous_owner}"
+                )
+            else:
+                legacy_owners[legacy_name] = name
         skill_dir = ROOT / rel_path
         skill_file = skill_dir / "SKILL.md"
         if not skill_file.is_file():
@@ -70,6 +92,9 @@ def main() -> int:
         if bundle_name in bundle_names:
             errors.append(f"duplicate bundle: {bundle_name}")
         bundle_names.add(bundle_name)
+        bundle_version = bundle.get("version")
+        if not isinstance(bundle_version, str) or not VERSION_RE.fullmatch(bundle_version):
+            errors.append(f"{bundle_name}: version must be semantic major.minor.patch")
         for skill_name in bundle.get("skills", []):
             if skill_name not in names:
                 errors.append(f"{bundle_name}: unknown skill {skill_name}")
@@ -77,6 +102,12 @@ def main() -> int:
             path = ROOT / manifest_path
             if not path.is_file():
                 errors.append(f"{bundle_name}: missing {harness} adapter {manifest_path}")
+                continue
+            manifest = load_json(path)
+            if manifest.get("name") != bundle_name:
+                errors.append(f"{bundle_name}: {harness} adapter name does not match")
+            if manifest.get("version") != bundle_version:
+                errors.append(f"{bundle_name}: {harness} adapter version does not match")
 
     actual_dirs = sorted(
         path.name for path in (ROOT / "skills").iterdir() if path.is_dir()

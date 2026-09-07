@@ -3,12 +3,12 @@
   "bundles": [
     {
       "name": "review-workflows",
-      "version": "0.1.0",
-      "description": "Bounded local code review, repair, and delivery-readiness workflows.",
+      "version": "0.2.0",
+      "description": "Bounded local code review, repair, and non-convergence alignment workflows.",
       "skills": [
         "code-review-fix-loop",
-        "local-diff-quality-supervisor",
-        "bounded-review-supervisor"
+        "review-fix-alignment-supervisor",
+        "bounded-review-fix-supervisor"
       ],
       "adapters": {
         "codex": "adapters/codex/review-workflows/manifest.json"

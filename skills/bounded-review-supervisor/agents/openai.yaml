@@ -1,7 +1,0 @@
-interface:
-  display_name: "Bounded Review Supervisor"
-  short_description: "active Goal 中最多四轮的有界 diff 审查修复"
-  default_prompt: "Use $bounded-review-supervisor in this active Goal to supervise the current project's full local diff review and repair loop."
-
-policy:
-  allow_implicit_invocation: false

@@ -6,9 +6,9 @@
 
 | Skill | 用途 | 可移植性 |
 | --- | --- | --- |
-| `code-review-fix-loop` | 对本地 review finding 执行有界的核验、修复、focused review 与验证循环 | Codex-specific |
-| `local-diff-quality-supervisor` | 把已有本地 diff 收敛到可交付的 `READY_LOCAL_DIFF` | Codex-specific |
-| `bounded-review-supervisor` | 在显式调用且存在 active Goal 时，以最多四轮完整 review 监督累计 diff | Codex-specific |
+| `code-review-fix-loop` | 对本地 review finding 执行有界的核验、修复、完整累计 diff review 与退出验证循环 | Codex-specific |
+| `review-fix-alignment-supervisor` | 在修复不收敛时静态检查完整 diff 的需求对齐、功能缺口、设计发散与最小充分性 | Codex-specific |
+| `bounded-review-fix-supervisor` | 在显式调用且存在 active Goal 时，经纠偏检查复用 Review 检查点并串联最多四个五轮修复窗口 | Codex-specific |
 
 三者目前依赖 Codex 的 review、Goal 或子 Skill 契约，所以暂不宣称跨 harness 可直接运行。未来的可移植 Skill 仍放在 `skills/`；平台差异放在 `adapters/<harness>/`，不要把平台分支复制回 Skill 本体。
 
@@ -31,7 +31,7 @@ python3 tooling/package_codex_plugin.py review-workflows
 python3 tooling/install_skill_links.py
 ```
 
-`install_skill_links.py` 默认把 `skills/*` 链接到官方用户级目录 `~/.agents/skills`，遇到非本仓库管理的同名文件会停止，不会覆盖。Codex Plugin 产物生成到 `dist/codex/review-workflows`，其中包含真实文件而不是逃逸出 Plugin 根目录的链接。
+`install_skill_links.py` 默认把 `skills/*` 链接到官方用户级目录 `~/.agents/skills`，遇到非本仓库管理的同名文件会停止，不会覆盖。当前名称全部链接成功后，它会按 catalog 的 `renamed_from` 元数据移除仍指向本仓库旧目录的废弃链接，并保留任何用户自有的同名路径。Codex Plugin 产物生成到 `dist/codex/review-workflows`，其中包含真实文件而不是逃逸出 Plugin 根目录的链接。
 
 ## 发布边界
 

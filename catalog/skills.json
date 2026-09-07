@@ -2,12 +2,13 @@
   "schema_version": 1,
   "skills": [
     {
-      "name": "bounded-review-supervisor",
-      "path": "skills/bounded-review-supervisor",
+      "name": "bounded-review-fix-supervisor",
+      "path": "skills/bounded-review-fix-supervisor",
       "category": "code-quality",
       "origin": "self-authored",
       "portability": "codex-specific",
-      "depends_on": ["code-review-fix-loop"],
+      "renamed_from": ["bounded-review-supervisor"],
+      "depends_on": ["code-review-fix-loop", "review-fix-alignment-supervisor"],
       "bundles": ["review-workflows"]
     },
     {
@@ -20,11 +21,12 @@
       "bundles": ["review-workflows"]
     },
     {
-      "name": "local-diff-quality-supervisor",
-      "path": "skills/local-diff-quality-supervisor",
+      "name": "review-fix-alignment-supervisor",
+      "path": "skills/review-fix-alignment-supervisor",
       "category": "code-quality",
       "origin": "self-authored",
       "portability": "codex-specific",
+      "renamed_from": ["local-diff-quality-supervisor"],
       "depends_on": ["code-review-fix-loop"],
       "bundles": ["review-workflows"]
     }

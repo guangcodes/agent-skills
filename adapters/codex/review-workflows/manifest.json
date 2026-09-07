@@ -1,23 +1,23 @@
 {
   "name": "review-workflows",
-  "version": "0.1.0",
-  "description": "Bounded local code review, repair, and delivery-readiness workflows for Codex.",
+  "version": "0.2.0",
+  "description": "Bounded local code review, repair, and non-convergence alignment workflows for Codex.",
   "author": {
     "name": "Guang"
   },
   "license": "MIT",
-  "keywords": ["code-review", "local-diff", "quality-gate"],
+  "keywords": ["code-review", "local-diff", "alignment"],
   "skills": "./skills/",
   "interface": {
     "displayName": "Review Workflows",
-    "shortDescription": "Review, repair, and quality-gate local code changes",
-    "longDescription": "Three bounded Codex workflows for review-fix loops, local diff delivery readiness, and explicit Goal-gated whole-diff supervision.",
+    "shortDescription": "Review, repair, and realign local code changes",
+    "longDescription": "Three bounded Codex workflows for review-fix loops, non-convergence alignment, and explicit Goal-gated multi-window supervision.",
     "developerName": "Guang",
     "category": "Developer Tools",
     "capabilities": ["Code review", "Local code changes"],
     "defaultPrompt": [
       "Use code-review-fix-loop to resolve actionable findings in my local diff.",
-      "Use local-diff-quality-supervisor to bring my current local diff to delivery readiness."
+      "Use review-fix-alignment-supervisor when repeated review fixes stop converging or drift from my requirements."
     ]
   }
 }
