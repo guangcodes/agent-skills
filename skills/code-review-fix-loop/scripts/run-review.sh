@@ -1,5 +1,6 @@
 #!/usr/bin/env bash
 set -euo pipefail
+umask 077
 
 export GIT_NO_LAZY_FETCH=1
 export GIT_TERMINAL_PROMPT=0
@@ -10,6 +11,7 @@ output_path=""
 scope_file=""
 caller_dir=$(pwd -P)
 original_review_argv=("$@")
+runtime_helper="$(cd "$(dirname "$0")" && pwd -P)/review_runtime.py"
 
 require_committed_head() {
   local root=$1
@@ -66,6 +68,11 @@ if [[ -n "$output_path" && "$output_path" != /* ]]; then
 fi
 
 args=(codex exec --sandbox read-only review --ephemeral --json)
+policy_args=$(python3 "$runtime_helper" policy-args)
+while IFS= read -r policy_arg; do
+  args+=("$policy_arg")
+done <<<"$policy_args"
+unset policy_args policy_arg
 if [[ -n "$output_path" ]]; then
   args+=(--output-last-message "$output_path")
 fi
@@ -320,12 +327,12 @@ if [[ -n "$output_path" ]]; then
 fi
 
 if ! $quiet_events && [[ -z "$output_path" ]]; then
-  exec "${args[@]}"
+  exec python3 "$runtime_helper" "${args[@]}"
 fi
 
 if ! $quiet_events; then
   status=0
-  "${args[@]}" || status=$?
+  python3 "$runtime_helper" "${args[@]}" || status=$?
   if (( status == 0 )) && [[ ! -s "$output_path" ]]; then
     printf 'review completed without a fresh nonempty result: %s\n' "$output_path" >&2
     exit 1
@@ -338,7 +345,8 @@ stderr_path="${output_path}.stderr.log"
 metrics_path="${output_path}.metrics"
 started_at_epoch=$(date +%s)
 status=0
-"${args[@]}" >"$events_path" 2>"$stderr_path" || status=$?
+python3 "$runtime_helper" "${args[@]}" >"$events_path" 2>"$stderr_path" || status=$?
+failure_kind=$(python3 "$runtime_helper" classify "$status" "$events_path" "$stderr_path" "$output_path")
 if (( status == 0 )) && [[ ! -s "$output_path" ]]; then
   status=1
 fi
@@ -362,12 +370,14 @@ fi
   printf 'stderr_bytes=%s\n' "$stderr_bytes"
   printf 'result_bytes=%s\n' "$result_bytes"
   printf 'exit_status=%s\n' "$status"
+  printf 'failure_kind=%s\n' "$failure_kind"
 } >"$metrics_path"
 if (( status == 0 )); then
   printf 'review completed; result=%s events=%s stderr=%s metrics=%s\n' "$output_path" "$events_path" "$stderr_path" "$metrics_path"
   exit 0
 fi
 
+printf 'review failure_kind=%s\n' "$failure_kind" >&2
 if [[ ! -s "$output_path" ]]; then
   printf 'review failed with status %d and no fresh nonempty result; events=%s stderr=%s metrics=%s\n' "$status" "$events_path" "$stderr_path" "$metrics_path" >&2
 else

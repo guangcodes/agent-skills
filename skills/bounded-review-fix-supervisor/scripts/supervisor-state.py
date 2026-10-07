@@ -11,9 +11,13 @@ import re
 import shutil
 import stat
 import subprocess
+import sys
 import tempfile
 from pathlib import Path, PurePosixPath
 from typing import Any, NoReturn
+
+sys.path.insert(0, str(Path(__file__).resolve().parent))
+from review_runtime import POLICY_ARGS, external_review_temp_root, failure_kind, run_reviewer
 
 
 BLOCKED_EXIT = 3
@@ -1042,6 +1046,9 @@ def command_begin_review(args: argparse.Namespace) -> None:
         state,
         Path(args.drift_check_file),
     )
+    if state["review_failure_count"] and workspace["diff_hash"] != state["last_review_diff_hash"]:
+        block(path, state, "workspace_changed_before_review_retry",
+              expected_diff_hash=state["last_review_diff_hash"], actual_diff_hash=workspace["diff_hash"])
     state["review_attempt_count"] += 1
     state["active_review_attempt"] = state["review_attempt_count"]
     state["phase"] = "reviewing"
@@ -1372,6 +1379,7 @@ def build_review_command(
         "review",
         "--ephemeral",
         "--json",
+        *POLICY_ARGS,
         "--output-schema",
         str(schema_path),
         "--output-last-message",
@@ -1424,26 +1432,23 @@ def command_execute_review(args: argparse.Namespace) -> None:
     verify_frozen_review_workspace(path, state, root)
     reviewer = shutil.which("codex")
     execution_error = None
-    with tempfile.TemporaryDirectory(prefix="bounded-review-exec-") as temp_dir:
+    try:
+        temp_root = external_review_temp_root(root, dict(os.environ))
+        scratch = tempfile.TemporaryDirectory(prefix="bounded-review-exec-", dir=temp_root)
+    except (OSError, ValueError):
+        block(path, state, "review_artifact_directory_unavailable")
+    with scratch as temp_dir:
         schema_path = Path(temp_dir) / "review-schema.json"
         final_path = Path(temp_dir) / "review-final.json"
         schema_path.write_text(json.dumps(review_output_schema()), encoding="utf-8")
         if reviewer is None:
             return_code, stdout, stderr = 127, b"", b"codex executable not found"
         else:
-            try:
-                completed = subprocess.run(
-                    build_review_command(reviewer, schema_path, final_path),
-                    cwd=root,
-                    env=git_environment(),
-                    stdin=subprocess.DEVNULL,
-                    stdout=subprocess.PIPE,
-                    stderr=subprocess.PIPE,
-                    check=False,
-                )
-                return_code, stdout, stderr = completed.returncode, completed.stdout, completed.stderr
-            except OSError as exc:
-                return_code, stdout, stderr = 127, b"", str(exc).encode()
+            return_code, stdout, stderr = run_reviewer(
+                build_review_command(reviewer, schema_path, final_path),
+                cwd=root,
+                env=git_environment(),
+            )
         try:
             final_output = final_path.read_bytes()
         except OSError:
@@ -1459,12 +1464,16 @@ def command_execute_review(args: argparse.Namespace) -> None:
             execution_error = str(exc)
 
     raw_output = b"stdout\0" + stdout + b"\0stderr\0" + stderr + b"\0final\0" + final_output
+    kind = failure_kind(return_code, stdout, stderr, bool(final_output))
+    if return_code == 0 and final_output and not review_complete:
+        kind = "invalid_result"
     result = {
         "schema_version": 1,
         "reviewer": "codex-exec-review",
         "reviewer_executable": reviewer,
         "review_complete": review_complete,
         "reviewer_exit_code": return_code,
+        "failure_kind": kind,
         "reviewed_diff_hash": state["last_review_diff_hash"],
         "coverage_status": "covered" if review_complete else "uncovered",
         "raw_output_sha256": hashlib.sha256(raw_output).hexdigest(),
@@ -1473,6 +1482,14 @@ def command_execute_review(args: argparse.Namespace) -> None:
     }
     if execution_error is not None:
         result["execution_error"] = execution_error
+    if not review_complete:
+        # Preserve diagnostics outside the worktree; expose paths, not raw logs.
+        diagnostics = Path(tempfile.mkdtemp(prefix="bounded-review-failure-", dir=temp_root))
+        for name, data in (("events.jsonl", stdout), ("stderr.log", stderr), ("result.txt", final_output)):
+            target = diagnostics / name
+            target.write_bytes(data)
+            target.chmod(0o600)
+        result["diagnostics_dir"] = str(diagnostics)
     state["latest_review_result"] = result
     root = verify_repository(path, state)
     paths = collect_workspace_paths(root, state["baseline_tree"])
@@ -1516,6 +1533,7 @@ def command_execute_review(args: argparse.Namespace) -> None:
             count=state["review_failure_count"],
             reviewer=result["reviewer"],
             reviewer_exit_code=result["reviewer_exit_code"],
+            failure_kind=result["failure_kind"],
             coverage_status=result["coverage_status"],
             raw_output_sha256=result["raw_output_sha256"],
             raw_output_bytes=result["raw_output_bytes"],

@@ -1,6 +1,7 @@
 import json
 import hashlib
 import os
+import shutil
 import subprocess
 import sys
 import tempfile
@@ -13,6 +14,7 @@ SCRIPT = Path(__file__).parents[1] / "scripts" / "supervisor-state.py"
 
 class SupervisorStateTest(unittest.TestCase):
     def setUp(self):
+        self.review_diagnostics = set()
         self.temp_dir = tempfile.TemporaryDirectory()
         self.root = Path(self.temp_dir.name) / "repo"
         self.root.mkdir()
@@ -26,6 +28,9 @@ import subprocess
 import sys
 from pathlib import Path
 
+if "mcp" in sys.argv:
+    print("[]")
+    raise SystemExit(0)
 if os.environ.get("GIT_NO_LAZY_FETCH") != "1":
     raise SystemExit(18)
 if os.environ.get("GIT_TERMINAL_PROMPT") != "0":
@@ -39,6 +44,8 @@ if os.environ.get("FAKE_REVIEW_MOVE_HEAD"):
         check=True,
     )
 output = os.environ.get("FAKE_REVIEW_OUTPUT")
+if os.environ.get("FAKE_REVIEW_STDERR"):
+    print(os.environ["FAKE_REVIEW_STDERR"], file=sys.stderr)
 if output:
     target = Path(sys.argv[sys.argv.index("--output-last-message") + 1])
     target.write_text(output, encoding="utf-8")
@@ -84,6 +91,8 @@ raise SystemExit(int(os.environ.get("FAKE_REVIEW_EXIT", "0")))
         except FileNotFoundError:
             pass
         self.temp_dir.cleanup()
+        for directory in self.review_diagnostics:
+            shutil.rmtree(directory)
 
     def git(self, *args):
         return subprocess.run(
@@ -105,7 +114,11 @@ raise SystemExit(int(os.environ.get("FAKE_REVIEW_EXIT", "0")))
             env=process_env,
         )
         self.assertEqual(result.returncode, expected, result.stderr or result.stdout)
-        return json.loads(result.stdout)
+        data = json.loads(result.stdout)
+        diagnostics = data.get("latest_review_result", {}).get("diagnostics_dir")
+        if diagnostics:
+            self.review_diagnostics.add(diagnostics)
+        return data
 
     def init_state(self, state, *, root=None, baseline=None, max_windows="4", expected=0):
         return self.invoke(
@@ -1467,6 +1480,45 @@ raise SystemExit(int(os.environ.get("FAKE_REVIEW_EXIT", "0")))
         self.assertEqual(result["phase"], "ready_for_review")
         self.assertEqual(result["review_failure_count"], 1)
 
+    def test_startup_permission_retry_preserves_checkpoint_and_resumes_review(self):
+        before = self.begin()
+        failure = "Error: failed to initialize in-process app-server client: Operation not permitted (os error 1)"
+        result = self.invoke(
+            "execute-review", "--state", str(self.state), expected=4,
+            env={"FAKE_REVIEW_EXIT": "1", "FAKE_REVIEW_STDERR": failure},
+        )
+        self.assertEqual(result["latest_review_result"]["failure_kind"], "startup_permission_denied")
+        directory = Path(result["latest_review_result"]["diagnostics_dir"])
+        self.assertFalse(directory.is_relative_to(self.root))
+        self.assertEqual(directory.stat().st_mode & 0o777, 0o700)
+        self.assertIn(failure, (directory / "stderr.log").read_text())
+        self.assertEqual(result["fix_window_count"], 0)
+        self.begin()
+        resumed = self.record_review([self.finding("after-retry")])
+        self.assertEqual(resumed["phase"], "ready_for_fix")
+        self.assertEqual(resumed["latest_review_result"]["failure_kind"], "none")
+        for field in ("baseline_tree", "requirement_digest", "last_review_diff_hash"):
+            self.assertEqual(resumed[field], before[field])
+
+    def test_review_retry_rejects_changed_snapshot(self):
+        self.begin()
+        self.record_review([], complete="false", expected=4)
+        (self.root / "tracked.txt").write_text("changed between attempts\n")
+        result = self.begin(expected=3)
+        self.assertEqual(result["exit_reason"], "workspace_changed_before_review_retry")
+
+    def test_failure_artifacts_ignore_tmpdir_inside_repository(self):
+        temp_inside_repo = self.root / "review-temp"
+        temp_inside_repo.mkdir()
+        self.begin()
+        result = self.invoke(
+            "execute-review", "--state", str(self.state), expected=4,
+            env={"FAKE_REVIEW_EXIT": "1", "TMPDIR": str(temp_inside_repo)},
+        )
+        directory = Path(result["latest_review_result"]["diagnostics_dir"])
+        self.assertFalse(directory.is_relative_to(self.root))
+        self.assertEqual(list(temp_inside_repo.iterdir()), [])
+
     def test_semantically_invalid_reviewer_output_counts_as_incomplete(self):
         self.begin()
         duplicate = self.finding("duplicate")
@@ -1474,6 +1526,7 @@ raise SystemExit(int(os.environ.get("FAKE_REVIEW_EXIT", "0")))
         self.assertEqual(result["phase"], "ready_for_review")
         self.assertEqual(result["review_failure_count"], 1)
         self.assertIn("duplicate", result["latest_review_result"]["execution_error"])
+        self.assertEqual(result["latest_review_result"]["failure_kind"], "invalid_result")
 
     def test_v7_state_requires_reinitialization(self):
         legacy = json.loads(self.state.read_text(encoding="utf-8"))
