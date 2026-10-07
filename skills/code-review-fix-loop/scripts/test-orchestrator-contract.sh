@@ -229,6 +229,7 @@ mkdir -p "$mock_bin"
 printf '%s\n' \
   '#!/usr/bin/env bash' \
   'set -euo pipefail' \
+  'if [[ " $* " == *" mcp list --json "* ]]; then printf "[]\n"; exit 0; fi' \
   'if [[ -n "${MOCK_ARGS_FILE:-}" ]]; then printf "%s\n" "$@" >"$MOCK_ARGS_FILE"; fi' \
   'output_path=""' \
   'while (( $# > 0 )); do' \
@@ -263,6 +264,12 @@ if PATH="$mock_bin:$PATH" MOCK_PWD_FILE="$reviewer_pwd" MOCK_ARGS_FILE="$reviewe
   [[ $(sed -n '2p' "$reviewer_args") == --sandbox ]] &&
   [[ $(sed -n '3p' "$reviewer_args") == read-only ]] &&
   [[ $(sed -n '4p' "$reviewer_args") == review ]] &&
+  grep -Fxq 'approval_policy="never"' "$reviewer_args" &&
+  grep -Fxq -- '--ignore-rules' "$reviewer_args" &&
+  grep -Fxq 'features.hooks=false' "$reviewer_args" &&
+  grep -Fxq 'features.plugins=false' "$reviewer_args" &&
+  grep -Fxq 'features.apps=false' "$reviewer_args" &&
+  grep -Fxq 'failure_kind=none' "${quiet_result}.metrics" &&
   grep -Fq 'exit_status=0' "${quiet_result}.metrics"; then
   pass 'quiet mode isolates reviewer streams and runs from the repository root'
 else
@@ -323,6 +330,7 @@ if [[ $stale_status -ne 0 ]] &&
   [[ ! -s "$stale_result" ]] &&
   grep -Fq 'no fresh nonempty result' "$stale_stderr" &&
   grep -Fq 'result_bytes=0' "${stale_result}.metrics" &&
+  grep -Fxq 'failure_kind=missing_result' "${stale_result}.metrics" &&
   grep -Fq 'exit_status=1' "${stale_result}.metrics"; then
   pass 'wrapper rejects successful reviewer exits without a fresh result'
 else

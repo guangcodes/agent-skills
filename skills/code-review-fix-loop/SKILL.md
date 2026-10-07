@@ -193,6 +193,7 @@ python3 <skill-dir>/scripts/workspace-snapshot.py \
 
 ## Reviewer 与验证职责
 
+- 启动 reviewer 前按下方“Reviewer 启动权限”处理宿主权限；项目只读不禁止 Codex 运行时维护工作区外的日志和状态。
 - 所有 review 只允许只读分析。reviewer 和主流程在 review 阶段都不得运行 test、lint、typecheck、build、integration、E2E、smoke、Docker、网络或远程检查。
 - reviewer 只做代码审查；本 Skill 的自动化验证只发生在符合条件的退出阶段。外部流程要求的测试保持其原始归属并单独记录。
 - reviewer 没有修改代码时，已有且仍绑定当前 diff 的外部证据不会因 review 本身失效，不得为 reviewer 重复执行。
@@ -202,6 +203,33 @@ python3 <skill-dir>/scripts/workspace-snapshot.py \
 - 调用 reviewer 时默认使用 `--quiet-events --output`：详细 JSONL 写入结果旁的 `.events.jsonl`，CLI stderr 写入 `.stderr.log`，耗时、事件/错误/结果字节数和退出状态写入 `.metrics`，主流程只读取最终结果与必要指标。等待 reviewer 时每次等待 30–60 秒，不要高频轮询、重复读取事件流或把完整事件历史送回模型。
 - `--output` 必须位于 Git worktree 外的系统临时目录；wrapper 对结果及三个 sidecar 路径执行 fail-closed 检查并拒绝 symlink。不得让 reviewer 产物进入被冻结的 diff，也不得用仓库内相对路径作为输出。
 - 累计 reviewer 接收冻结基线后的完整当前 diff 和必要的 tracked 直接依赖；不得读取无关 memory、历史任务、基线外改动或执行全仓探索。
+
+### Reviewer 启动权限
+
+`run-review.sh` 的 CLI 进程需要使用原有 `CODEX_HOME` 中的认证、日志、SQLite 和运行状态。
+`--sandbox read-only` 限制 reviewer 生成的命令；外层工具沙盒仍会约束整个 CLI 的启动。
+在宿主已知不允许该运行时访问的环境中，由调用方使用宿主的单次命令授权启动这个
+wrapper（Codex exec 工具为 `sandbox_permissions="require_escalated"`），并说明只读审查范围和
+输出路径。普通脚本不能自行解除父进程的沙盒；不要在脚本里实现提权或自动改权限。
+外层授权必须限定到已检查的启动命令，不设置通用命令永久放行规则，不要求 Full access。
+授权会放行该启动命令的外层限制，并非只给日志目录增加写权限；子 reviewer 的只读约束仍须生效。
+
+自带 `scripts/review_runtime.py` 固定 `approval_policy="never"`，忽略用户/项目 execpolicy
+规则，关闭 reviewer 的应用、插件、钩子、通知回调、浏览器/电脑操作、多代理及 memory；保留
+模型配置与原有认证位置。启动前仅枚举 MCP 配置元数据，逐个禁用并再次确认，无法确认就阻塞。
+不以空 MCP 配置表、提示词或 shell 只读作为其他工具只读的证明。要求当前 CLI 支持这些
+参数和配置；管理策略冲突或版本不兼容时保留阻塞，不移除限制重跑。不复制认证、不改
+`CODEX_HOME`、不删除数据库、不扩大整个会话的可写目录。
+
+默认 quiet 模式的 `.metrics` 包含 `failure_kind`。`startup_permission_denied` 只表示
+app-server 初始化遭遇权限拒绝，是外层授权候选；日志数据库的 readonly 警告本身不充分。
+尚未授权的启动失败可由宿主审核后重试一次；授权被拒绝或已授权后仍失败则停止并保留证据。
+`authentication_failed`、`capability_check_failed`、`timeout`、`missing_result` 及其他失败
+分别诊断，不盲目提权。执行最多 30 分钟，超时终止本轮进程组；需要调整时明确诊断后再修改策略。
+能力检查失败时，stderr 中的 `capability_diagnostics_path` 指向工作区外的私有原因日志；
+只保存底层 stderr，不保存可能包含凭据的 MCP inventory JSON，读取后脱敏再报告。
+重试仍属于当前审查检查点，使用同一 baseline、范围和台账，前后重新采集规范快照；快照变化
+则拒绝旧结果。启动失败不增加 `fix_round`，成功审查后直接继续原循环，不切换 `/review` 或外部终端。
 
 ## 主循环
 

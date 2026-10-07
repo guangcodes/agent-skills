@@ -71,6 +71,26 @@ python3 <skill-dir>/scripts/supervisor-state.py execute-review \
 
 初始 reviewer 必须在 CLI 强制的 read-only sandbox 中对全部 staged、unstaged、untracked diff 做纯静态审查，指令中明确禁止 test、lint、typecheck、build、integration、E2E、smoke、benchmark、Docker、网络和远程命令。结构化 JSON 必须显式声明 `coverage_complete=true`。工作区、HEAD、范围或安全筛查变化时拒绝结果；连续两次 reviewer 不完整时熔断。没有 actionable finding 时直接完成；否则进入第一个修复窗口。
 
+`execute-review` 需要 CLI 正常使用原有 `CODEX_HOME` 的认证和运行状态。若外层沙盒不允许
+这些访问，由调用方通过宿主的单次命令授权执行已检查的 `execute-review --state <state>`
+（Codex exec 工具使用 `sandbox_permissions="require_escalated"`），不要授权整个修复窗口。
+外层授权放行的是该启动命令，不是“仅日志可写”；项目只读由子 reviewer 的 sandbox 执行。
+自带 `scripts/review_runtime.py` 固定 `approval_policy="never"`，忽略用户/项目 execpolicy
+规则，关闭应用、插件、钩子、通知回调、浏览器/电脑操作、多代理和 memory，并逐个禁用、
+复核 MCP。保留原模型配置和认证位置；安全能力检查失败、管理策略冲突或不支持这些选项时
+停止，不移除限制重试。不得修改 `CODEX_HOME`、复制认证、要求 Full access 或另开终端。
+
+`latest_review_result.failure_kind` 区分初始化权限拒绝、认证失败、能力检查失败、超时、
+结果缺失及无效结果；失败原始日志保存在 `diagnostics_dir` 指向的工作区外私有临时目录，
+按需读取并脱敏，不把完整日志送回上下文。日志库 readonly 警告不能单独证明初始化权限故障。
+能力检查失败时，stderr 的 `capability_diagnostics_path` 另指向私有的底层原因日志；
+不保存可能包含凭据的 MCP inventory JSON。
+首次 `startup_permission_denied` 且此前未获外层授权时，宿主可以审核一次重试；沿用同一
+state、baseline 和需求摘要，重新执行漂移检查与 `begin-review` 后再 `execute-review`。
+授权被拒绝或已授权后仍失败时停止，不循环申请权限；其他错误先诊断原因。审查失败不消耗
+修复窗口，仍遵守两次不完整即熔断的上限。执行超时为 30 分钟，终止本轮进程组；子 Skill
+的审查按其自身相同权限约定执行，保持原监督流程连续。
+
 ### 2. 开始一个修复窗口
 
 每个窗口前重新执行需求漂移、范围和快照核对：
