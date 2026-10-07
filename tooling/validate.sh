@@ -21,13 +21,20 @@ bash "$repo_root/skills/bounded-review-fix-supervisor/tests/test_contract.sh" \
   "$repo_root/skills/bounded-review-fix-supervisor"
 "$python_bin" -m unittest discover -s "$repo_root/skills/review-fix-alignment-supervisor/tests" -p 'test_*.py'
 
-"$python_bin" "$repo_root/tooling/package_codex_plugin.py" review-workflows >/dev/null
-
 plugin_validator=${PLUGIN_VALIDATOR:-$HOME/.codex/skills/.system/plugin-creator/scripts/validate_plugin.py}
-if [[ -f "$plugin_validator" ]]; then
-  "$python_bin" "$plugin_validator" "$repo_root/dist/codex/review-workflows"
-else
-  printf 'official Plugin validator not found; package was still materialized\n' >&2
+while IFS= read -r bundle_name; do
+  "$python_bin" "$repo_root/tooling/package_codex_plugin.py" "$bundle_name" >/dev/null
+  if [[ -f "$plugin_validator" ]]; then
+    "$python_bin" "$plugin_validator" "$repo_root/dist/codex/$bundle_name"
+  fi
+done < <(
+  "$python_bin" -c \
+    'import json, pathlib, sys; doc=json.loads((pathlib.Path(sys.argv[1]) / "catalog" / "bundles.json").read_text()); print("\n".join(bundle["name"] for bundle in doc["bundles"] if "codex" in bundle.get("adapters", {})))' \
+    "$repo_root"
+)
+
+if [[ ! -f "$plugin_validator" ]]; then
+  printf 'official Plugin validator not found; packages were still materialized\n' >&2
 fi
 
 printf 'agent-skills validation passed\n'

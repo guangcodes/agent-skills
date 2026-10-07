@@ -1,0 +1,22 @@
+{
+  "name": "delivery-workflows",
+  "version": "0.1.0",
+  "description": "Explicit Codex workflow for verifying local changes and submitting them as a project-compliant PR or MR.",
+  "author": {
+    "name": "Guang"
+  },
+  "license": "MIT",
+  "keywords": ["pull-request", "merge-request", "delivery", "git"],
+  "skills": "./skills/",
+  "interface": {
+    "displayName": "Delivery Workflows",
+    "shortDescription": "Verify and submit project-compliant PRs or MRs",
+    "longDescription": "An explicit-only Codex workflow that validates the current diff, applies only clear small fixes, creates a project-compliant PR or MR, and performs a read-only post-creation review.",
+    "developerName": "Guang",
+    "category": "Developer Tools",
+    "capabilities": ["Project verification", "Pull requests", "Merge requests"],
+    "defaultPrompt": [
+      "Use $submit-pr-mr only when explicitly requested to verify the current diff and submit it as a project-compliant PR or MR."
+    ]
+  }
+}

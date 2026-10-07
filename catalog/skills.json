@@ -29,6 +29,17 @@
       "renamed_from": ["local-diff-quality-supervisor"],
       "depends_on": ["code-review-fix-loop"],
       "bundles": ["review-workflows"]
+    },
+    {
+      "name": "submit-pr-mr",
+      "path": "skills/submit-pr-mr",
+      "category": "delivery",
+      "origin": "self-authored",
+      "provenance": "self-authored explicit PR/MR submission workflow",
+      "discovery": "explicit-only",
+      "portability": "codex-specific",
+      "depends_on": [],
+      "bundles": ["delivery-workflows"]
     }
   ]
 }

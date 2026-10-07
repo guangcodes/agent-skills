@@ -13,6 +13,17 @@
       "adapters": {
         "codex": "adapters/codex/review-workflows/manifest.json"
       }
+    },
+    {
+      "name": "delivery-workflows",
+      "version": "0.1.0",
+      "description": "Explicit project verification and PR/MR submission workflows.",
+      "skills": [
+        "submit-pr-mr"
+      ],
+      "adapters": {
+        "codex": "adapters/codex/delivery-workflows/manifest.json"
+      }
     }
   ]
 }
