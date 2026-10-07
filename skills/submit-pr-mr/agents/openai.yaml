@@ -1,0 +1,7 @@
+interface:
+  display_name: "Submit PR or MR"
+  short_description: "显式触发后检查、提交并审查 PR 或 MR"
+  default_prompt: "显式使用 $submit-pr-mr：按项目规则检查当前 diff，完成必要的小范围修复、分支提交推送、创建 PR/MR，并执行创建后的只读审查。"
+
+policy:
+  allow_implicit_invocation: false
