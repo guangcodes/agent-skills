@@ -46,6 +46,23 @@
       "portability": "codex-specific",
       "depends_on": [],
       "bundles": ["delivery-workflows"]
+    },
+    {
+      "name": "sonar-fix-local",
+      "path": "skills/sonar-fix-local",
+      "category": "code-quality",
+      "origin": "adapted",
+      "provenance": "Adapted from user-provided Downloads/fix-sonar SKILL.md and reference.md; local-only repair, independent diagnostic helper.",
+      "discovery": "explicit-only",
+      "runtime_requirements": [
+        "Node.js >=22.16",
+        "Git",
+        "Sonar project Browse permission and User Token",
+        "Project-specific validation tools"
+      ],
+      "portability": "codex-specific",
+      "depends_on": [],
+      "bundles": []
     }
   ]
 }

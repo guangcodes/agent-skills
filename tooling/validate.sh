@@ -37,4 +37,6 @@ if [[ ! -f "$plugin_validator" ]]; then
   printf 'official Plugin validator not found; packages were still materialized\n' >&2
 fi
 
+node --test "$repo_root/skills/sonar-fix-local/tests/"*.test.mjs
+
 printf 'agent-skills validation passed\n'
