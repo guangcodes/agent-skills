@@ -3,6 +3,7 @@ import { resolve } from 'node:path';
 import { pathToFileURL } from 'node:url';
 import { parseEnv } from 'node:util';
 import { execFileSync } from 'node:child_process';
+import { parseProperties } from './properties.mjs';
 
 // 只解析配置，不执行 .env.local；Git 忽略检查失败时不读取其中的凭据。
 export function loadConfig(root, env = process.env, checkIgnored = () => execFileSync('git', ['check-ignore', '-q', '.env.local'], { cwd: root, stdio: 'ignore' })) {
@@ -18,7 +19,7 @@ export function loadConfig(root, env = process.env, checkIgnored = () => execFil
   const url = new URL(host);
   if (url.origin !== 'https://sonar.rydev.work' || url.username || url.password || url.search || url.hash || url.pathname !== '/') throw Error('仅支持 https://sonar.rydev.work，拒绝向其他目标发送凭据');
   const properties = readFileSync(resolve(root, 'sonar-project.properties'), 'utf8');
-  const project = properties.match(/^\s*sonar\.projectKey\s*=\s*(\S+)\s*$/m)?.[1];
+  const project = parseProperties(properties, { allowContinuations: true }).get('sonar.projectKey');
   if (!project) throw Error('缺少 sonar.projectKey');
   return { host: url.origin, token, project };
 }
@@ -36,12 +37,14 @@ export async function collect(config, head, fetcher = fetch) {
   };
   const pages = async (path, params, field) => {
     const rows = [];
+    let total;
     for (let page = 1; page <= 100; page++) {
       const data = await get(path, { ...params, p: String(page), ps: '100' });
-      if (!Array.isArray(data[field]) || !Number.isInteger(data.paging?.total)) throw Error('分页响应缺少数据或总数，停止自动修复');
+      if (!Array.isArray(data[field]) || !Number.isInteger(data.paging?.total) || (total !== undefined && total !== data.paging.total)) throw Error('分页响应缺少数据或总数正在变化，停止自动修复');
+      total = data.paging.total;
       rows.push(...data[field]);
-      if (rows.length >= data.paging.total) return rows;
-      if (!data[field].length) throw Error('分页提前结束，结果不完整');
+      if (rows.length === total) return rows;
+      if (!data[field].length || rows.length > total) throw Error('分页提前结束或总数不符，结果不完整');
     }
     throw Error('分页超过 100 页，结果不完整');
   };
@@ -53,7 +56,7 @@ export async function collect(config, head, fetcher = fetch) {
   const gate = await get('/api/qualitygates/project_status', { analysisId });
   if (!gate.projectStatus?.status) throw Error('缺少有效门禁状态，停止自动修复');
   const issues = await pages('/api/issues/search', { componentKeys: config.project, resolved: 'false', inNewCodePeriod: 'true' }, 'issues');
-  const hotspots = await pages('/api/hotspots/search', { projectKey: config.project, status: 'TO_REVIEW', inNewCodePeriod: 'true' }, 'hotspots');
+  const hotspots = await pages('/api/hotspots/search', { project: config.project, status: 'TO_REVIEW', inNewCodePeriod: 'true' }, 'hotspots');
   const after = await get('/api/ce/component', { component: config.project });
   return {
     project: config.project, analysisId, analysisRevision: analysis?.revision ?? null, localHead: head,
