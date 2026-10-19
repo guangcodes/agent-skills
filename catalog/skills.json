@@ -46,6 +46,25 @@
       "portability": "codex-specific",
       "depends_on": [],
       "bundles": ["delivery-workflows"]
+    },
+    {
+      "name": "sonar-fix-local",
+      "path": "skills/sonar-fix-local",
+      "category": "code-quality",
+      "origin": "adapted",
+      "provenance": "Adapted from Downloads/fix-sonar first four steps; verified online-rule snapshot, isolated local SonarQube analysis and local coverage workflow.",
+      "discovery": "explicit-only",
+      "runtime_requirements": [
+        "Node.js >=22.16",
+        "Git",
+        "Python 3",
+        "Local Docker with Unix socket context",
+        "Sonar project Browse permission and access to configuration/plugin GET APIs",
+        "Project-specific dependencies and coverage tools"
+      ],
+      "portability": "codex-specific",
+      "depends_on": [],
+      "bundles": []
     }
   ]
 }

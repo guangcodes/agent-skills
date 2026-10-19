@@ -1,0 +1,6 @@
+interface:
+  display_name: "Sonar 本地修复"
+  short_description: "复用线上规则在本机分析当前源码，修复普通问题并保留未提交改动"
+  default_prompt: "使用 $sonar-fix-local 复用线上规则，在本机分析当前源码与覆盖率，修复普通违规并验证；覆盖率补测和安全热点先让我确认，不提交、不推送。"
+policy:
+  allow_implicit_invocation: false

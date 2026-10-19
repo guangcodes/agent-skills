@@ -11,6 +11,8 @@
 | `bounded-review-fix-supervisor` | 在显式调用且存在 active Goal 时，经纠偏检查复用 Review 检查点并串联最多四个五轮修复窗口 | Codex-specific |
 | `submit-pr-mr` | 显式触发后按项目规则验证、提交并创建 PR/MR，再做只读审查 | Codex-specific |
 
+`sonar-fix-local` 仅显式触发，只读复用 rydev 线上规则，在隔离的本机 SonarQube 分析当前源码与本地覆盖率，核验并修复普通违规后停在未提交状态；覆盖率补测与安全热点先交用户确认，新代码门禁暂不评估。源码与报告只提交本机，工具/缓存留在个人目录。凭据由目标项目被 Git 忽略的 `.env.local` 提供，详见 [Skill 说明](skills/sonar-fix-local/SKILL.md)。
+
 这些 Skill 依赖 Codex 的 review、Goal、Git 和平台 CLI 能力，所以暂不宣称跨 harness 可直接运行。未来的可移植 Skill 仍放在 `skills/`；平台差异放在 `adapters/<harness>/`，不要把平台分支复制回 Skill 本体。
 
 ## 目录
