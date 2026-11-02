@@ -64,3 +64,21 @@ export function parseProperties(text, { allowContinuations = false } = {}) {
   }
   return properties;
 }
+
+// 此隐藏参数仅由 Scanner 消费，不能通过服务端项目设置 API 写入。
+export const SCANNER_ONLY_SETTINGS = new Set(["sonar.filesize.limit"]);
+export function scannerSettings(settings, properties = new Map()) {
+  const result = {};
+  for (const key of SCANNER_ONLY_SETTINGS) {
+    const setting = settings.find((item) => item.key === key);
+    const value = properties.has(key) ? properties.get(key) : setting?.value;
+    if (value === undefined) {
+      if (setting) throw Error(`扫描参数形态不支持：${key}`);
+      continue;
+    }
+    if (typeof value !== "string" || !/^-?\d+$/.test(value))
+      throw Error(`扫描参数必须为整数字符串：${key}`);
+    result[key] = value;
+  }
+  return result;
+}

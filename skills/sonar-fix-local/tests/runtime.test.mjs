@@ -398,3 +398,17 @@ test("DOCKER_CONTEXT 优先于本机 DOCKER_HOST，资源操作仍固定记录�
       ),
   );
 });
+
+for (const [label, properties, expected] of [
+  ["继承线上", "sonar.projectKey=fixture\n", "30"],
+  ["项目覆盖", "sonar.filesize.limit=12\n", "12"],
+]) test(`Scanner 隐藏文件大小参数：${label}`, (t) => {
+  const f = fixture(t, properties);
+  save(path.join(f.run, "config/settings.json"), {
+    settings: [{ key: "sonar.filesize.limit", value: "30", inherited: true }],
+  });
+  f.execute("scan", "capture");
+  const args = JSON.parse(fs.readFileSync(path.join(f.run, "scanner-args.json")));
+  assert.equal(args.find((value) => value.startsWith("-Dsonar.filesize.limit=")),
+    `-Dsonar.filesize.limit=${expected}`);
+});

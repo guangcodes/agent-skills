@@ -5,6 +5,7 @@ import crypto from "node:crypto";
 import { execFileSync, spawn } from "node:child_process";
 import { fileURLToPath, pathToFileURL } from "node:url";
 import { loadConfig } from "./diagnose.mjs";
+import { scannerSettings, SCANNER_ONLY_SETTINGS } from "./properties.mjs";
 
 export const CACHE = path.join(os.homedir(), ".local/share/sonar-fix-local");
 // 相同 JSON/YAML 输入也会触发 IaC 规则；Profile 与分析器设置使用同一映射。
@@ -328,7 +329,13 @@ export function localClient(origin, token, fetcher = fetch) {
     } catch {
       throw Error(`本机 ${u.pathname} 请求失败，凭据与正文未输出`);
     }
-    if (!r.ok) throw Error(`本机 ${u.pathname}: HTTP ${r.status}`);
+    if (!r.ok) {
+      // 只报告已知结构的配置 key 和作用域，不输出可能包含凭据的响应正文或值。
+      const setting = endpoint === "/api/settings/set" && /^sonar\.[a-zA-Z0-9_.]+$/.test(params.key)
+        ? `，配置 ${params.key}，作用域 ${params.component ? "project" : "global"}`
+        : "";
+      throw Error(`本机 ${u.pathname}: HTTP ${r.status}${setting}`);
+    }
     const text = await r.text();
     try {
       return JSON.parse(text);
@@ -434,7 +441,7 @@ export async function bootstrap(run, origin) {
     state.project,
   );
   for (const s of read(path.join(run, "config/settings.json")).settings) {
-    if (UNSUPPORTED_ISSUE_PATTERNS.has(s.key)) continue;
+    if (UNSUPPORTED_ISSUE_PATTERNS.has(s.key) || SCANNER_ONLY_SETTINGS.has(s.key)) continue;
     await api(
       "/api/settings/set",
       {
@@ -449,7 +456,7 @@ export async function bootstrap(run, origin) {
     );
   }
   const settings = read(path.join(run, "config/settings.json")).settings.filter(
-    (setting) => !UNSUPPORTED_ISSUE_PATTERNS.has(setting.key),
+    (setting) => !UNSUPPORTED_ISSUE_PATTERNS.has(setting.key) && !SCANNER_ONLY_SETTINGS.has(setting.key),
   );
   const localSettings = settings.length
     ? await api("/api/settings/values", {
@@ -469,6 +476,9 @@ export async function bootstrap(run, origin) {
       throw Error(`本机分析范围设置不一致：${setting.key}`);
   }
   save(path.join(run, "config/local-settings.json"), localSettings);
+  save(path.join(run, "config/scanner-settings.json"), scannerSettings(
+    read(path.join(run, "config/settings.json")).settings,
+  ));
   save(
     path.join(run, "config/local-plugins.json"),
     await api("/api/plugins/installed"),

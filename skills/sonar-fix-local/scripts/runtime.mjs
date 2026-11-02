@@ -2,7 +2,7 @@ import fs from "node:fs";
 import path from "node:path";
 import { execFileSync, spawn } from "node:child_process";
 import { pathToFileURL } from "node:url";
-import { parseProperties, serializeCsvValues } from "./properties.mjs";
+import { parseProperties, serializeCsvValues, scannerSettings } from "./properties.mjs";
 import {
   read,
   save,
@@ -280,6 +280,10 @@ export async function scan(run) {
     "utf8",
   );
   const properties = parseProperties(props);
+  const scanSettings = scannerSettings(
+    read(path.join(run, "config/settings.json")).settings, properties,
+  );
+  save(path.join(run, "scanner-settings-effective.json"), scanSettings);
   const onlineExclusions = read(
     path.join(run, "config/settings.json"),
   ).settings.find((setting) => setting.key === "sonar.exclusions");
@@ -336,6 +340,7 @@ export async function scan(run) {
       "-Dsonar.coverageReportPaths=",
       "-Dsonar.testExecutionReportPaths=",
       `-Dsonar.exclusions=${exclusions}${exclusions ? "," : ""}**/.git/**`,
+      ...Object.entries(scanSettings).map(([key, value]) => `-D${key}=${value}`),
       "-Dsonar.qualitygate.wait=false",
     ],
     path.join(run, "scanner.log"),

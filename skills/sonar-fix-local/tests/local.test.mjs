@@ -475,6 +475,11 @@ for (const mismatch of [false, true])
         }
         if (endpoint === "/api/settings/set") {
           const key = params.get("key");
+          if (key === "sonar.filesize.limit") {
+            res.statusCode = 400;
+            res.end(JSON.stringify({ errors: [{ msg: "Scanner-only property" }] }));
+            return;
+          }
           const isGlobal = key.startsWith("sonar.global.");
           if (
             isGlobal
@@ -529,8 +534,12 @@ for (const mismatch of [false, true])
           project,
           name: `Local ${profile.language} 0123456789abcdef`,
         });
-      assert.equal(applied.size, settings.length);
-      for (const setting of settings) {
+      assert.deepEqual(
+        JSON.parse(fs.readFileSync(path.join(run, "config/scanner-settings.json"))),
+        { "sonar.filesize.limit": "30" },
+      );
+      assert.equal(applied.size, settings.length - 1);
+      for (const setting of settings.filter((item) => item.key !== "sonar.filesize.limit")) {
         const actual = applied.get(setting.key);
         assert.equal(
           actual.component,
