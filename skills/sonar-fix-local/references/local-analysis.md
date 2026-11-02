@@ -8,7 +8,7 @@
 2. 执行 `node <skill-directory>/scripts/local.mjs prepare <project-root>`。标准输出为唯一的个人运行目录，后续简称 `<run>`；源码快照包含 Git 已跟踪文件和非忽略的未跟踪文件，跳过已删除文件，拒绝环境凭据、符号链接及未支持语言。忽略的环境文件、node_modules 和 .git 不复制。
 3. 执行 `node <skill-directory>/scripts/runtime.mjs start <run> [port]`。端口默认 19090，冲突时选择其他空闲高位端口，不停止已有服务。
 
-`prepare` 只 GET 线上配置，导出相关 Profile、门禁和分析范围设置，并下载线上 YAML 插件。`start` 使用导出的精确 SonarQube 版本、官方 Scanner 8.1.0 镜像及 nginx 本机固定代理，创建全新私有项目和独立本机凭据，导入配置并比对规则编号、数量、参数、类型、严重级别/impacts、分析器版本及门禁条件。规则配置是快照，不维护手工映射。`sonar.global.exclusions` 和 `sonar.global.test.exclusions` 按全局作用域导入本轮隔离实例，其余设置写入本机项目；线上继承标记不改变设置本身的作用域。多值设置按重复参数导入，随后读取本机有效值逐项比对；作用域或值不一致时拒绝继续。导出包含 `sonar.test.inclusions`；多条件忽略、文件内容忽略、代码块忽略和规则适用范围（`sonar.issue.ignore.multicriteria`、`sonar.issue.ignore.allfile`、`sonar.issue.ignore.block`、`sonar.issue.enforce.multicriteria`）无论通过 `value`、`values` 还是结构化 `fieldValues` 返回，都在未支持完整同步时停止。
+`prepare` 只 GET 线上配置，导出相关 Profile、门禁和分析范围设置，并下载线上 YAML 插件。`start` 使用导出的精确 SonarQube 版本、官方 Scanner 8.1.0 镜像及 nginx 本机固定代理，创建全新私有项目和独立本机凭据，导入配置并比对规则编号、数量、参数、类型、严重级别/impacts、分析器版本及门禁条件。规则配置是快照，不维护手工映射。`sonar.global.exclusions` 和 `sonar.global.test.exclusions` 按全局作用域导入本轮隔离实例，隐藏扫描参数 `sonar.filesize.limit` 通过 Scanner 传递，项目 properties 中的显式值优先，导出值及实际传入值分别记录于 `config/scanner-settings.json` 和 `scanner-settings-effective.json`；其余设置写入本机项目；线上继承标记不改变设置本身的作用域。多值设置按重复参数导入，随后读取本机有效值逐项比对；作用域或值不一致时拒绝继续。导出包含 `sonar.test.inclusions`；多条件忽略、文件内容忽略、代码块忽略和规则适用范围（`sonar.issue.ignore.multicriteria`、`sonar.issue.ignore.allfile`、`sonar.issue.ignore.block`、`sonar.issue.enforce.multicriteria`）无论通过 `value`、`values` 还是结构化 `fieldValues` 返回，都在未支持完整同步时停止。
 
 镜像下载发生在挂载源码之前。Sonar 和 Scanner 仅连接 Docker internal 网络，没有外网默认路由；宿主 API 经 `127.0.0.1` 固定代理转发到本轮 Sonar 容器。代理不接受任意转发目标。线上 token 不传给 Docker。本机账号随本轮服务清理销毁。
 
