@@ -28,8 +28,18 @@ dist/                           生成产物，不提交 Git
 
 ## 日常操作
 
+首次运行验证前，在本地虚拟环境中安装验证依赖：
+
 ```bash
-./tooling/validate.sh
+python3 -m venv .venv
+.venv/bin/python -m pip install -r tooling/requirements.txt
+AGENT_SKILLS_PYTHON=.venv/bin/python ./tooling/validate.sh
+```
+
+依赖清单位于 `tooling/requirements.txt`；CI 会在运行验证前自动安装它。
+
+```bash
+AGENT_SKILLS_PYTHON=.venv/bin/python ./tooling/validate.sh
 python3 tooling/package_codex_plugin.py review-workflows
 python3 tooling/package_codex_plugin.py delivery-workflows
 python3 tooling/install_skill_links.py

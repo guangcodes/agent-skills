@@ -18,6 +18,16 @@ description: 显式调用后只读同步 rydev Sonar 规则，在隔离的本机
 
 先阅读项目约定与工作区状态，再按 [本机操作流程](references/local-analysis.md) 执行。该参考给出脚本入口、覆盖率命令选择、故障停止与清理方式。只启动本轮带唯一标识的临时服务；结束或失败后清理自己的容器，保留私有报告，不影响其他 Docker 服务。
 
+## 项目级并发与生命周期
+
+- `runtime.mjs start` 在创建任何本轮 Docker 资源前，按项目身份原子获取 `~/.local/share/sonar-fix-local/locks/<project-key>.lock/`（受限运行环境会把同一锁根目录落在本轮个人缓存中）。Git 项目身份优先使用 canonical `git-common-dir`，所以不同 worktree 共享锁；非 Git 项目使用 canonical project root；最终身份用稳定 SHA-256 值作为 project key。
+- 锁元数据记录原始身份、project key、run ID、运行目录、持有进程、创建时间以及 Docker context、Unix socket 和 daemon ID。锁持有进程是本 Skill 启动的内部 holder，因此独立的 `start`、`scan`、`stop` 命令仍共享同一活动锁。
+- 同项目已有活动锁时，当前启动立即停止，只报告已有 run ID、运行目录和精确资源状态，不终止已有运行。不同 project key 互不阻塞。所有本轮 Sonar、代理、Scanner 容器和网络都带 `sonar-fix-local.run=<run-id>` 标签；手动服务和其他 Docker 资源不参与清理。
+- 同一活动 run 的 `scan` 也通过原子标记互斥，持有到结果读取或异常清理结束。重复扫描直接拒绝，不删除正在运行的扫描资源；正常退出释放扫描标记，项目锁仍由 `stop` 释放。
+- holder 退出不代表启动或扫描进程已经结束；存在未释放的启动或扫描标记时，拒绝自动回收，保留锁、资源和凭据，由显式 `stop` 统一确认停止。确认没有未结束的操作后，必须先用同一 Docker context、socket、daemon 和 run ID 核对资源：资源不存在才能删除过期锁；资源仍存在时只删除精确确认归属的本轮资源，核对或清理失败则保留锁和本机凭据。Docker 身份变化会停止清理并报告原因。
+- 正常扫描先保存并校验结果，再由 `stop` 清理；启动异常、覆盖率失败、扫描/结果读取失败、Bridge 无响应、脚本异常和中断均进入同一个当前 run 清理入口。清理会核对容器、网络、临时凭据和锁已消失，报告、覆盖率、日志、配置和源码快照继续保留。
+- 清理遇到尚在启动或扫描的当前 run 时，通过运行状态标记请求取消，等待对应流程确认所有创建命令及 HTTP 操作已结束后再删除资源和释放项目锁；无法确认停止时保留现场并报错，不向磁盘记录的 PID 发送终止信号。
+
 ## 线上凭据
 
 项目根 `.env.local` 必须被 Git 忽略，由用户本地填写：

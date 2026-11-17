@@ -22,6 +22,9 @@ bash "$repo_root/skills/bounded-review-fix-supervisor/tests/test_contract.sh" \
 "$python_bin" -m unittest discover -s "$repo_root/skills/review-fix-alignment-supervisor/tests" -p 'test_*.py'
 
 plugin_validator=${PLUGIN_VALIDATOR:-$HOME/.codex/skills/.system/plugin-creator/scripts/validate_plugin.py}
+if [[ ! -f "$plugin_validator" && -f "$repo_root/tooling/vendor/openai/validate_plugin.py" ]]; then
+  plugin_validator="$repo_root/tooling/vendor/openai/validate_plugin.py"
+fi
 while IFS= read -r bundle_name; do
   "$python_bin" "$repo_root/tooling/package_codex_plugin.py" "$bundle_name" >/dev/null
   if [[ -f "$plugin_validator" ]]; then
