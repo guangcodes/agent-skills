@@ -2,10 +2,15 @@ import fs from "node:fs";
 import path from "node:path";
 import os from "node:os";
 import crypto from "node:crypto";
-import { execFileSync, spawn } from "node:child_process";
+import { execFileSync } from "node:child_process";
 import { fileURLToPath, pathToFileURL } from "node:url";
 import { loadConfig } from "./diagnose.mjs";
 import { scannerSettings, SCANNER_ONLY_SETTINGS } from "./properties.mjs";
+import { projectIdentity, projectKey, captureRunLease } from "./lock.mjs";
+import { runChild, interruptionError, throwIfAborted, timeoutSignal } from "./process.mjs";
+import { read, save } from "./state.mjs";
+export { read, save } from "./state.mjs";
+export { interruptionError, throwIfAborted, waitWithSignal, timeoutSignal } from "./process.mjs";
 
 export const CACHE = path.join(os.homedir(), ".local/share/sonar-fix-local");
 // 相同 JSON/YAML 输入也会触发 IaC 规则；Profile 与分析器设置使用同一映射。
@@ -48,13 +53,8 @@ const SETTINGS = [
   ...UNSUPPORTED_ISSUE_PATTERNS.keys(),
 ];
 const hash = (data) => crypto.createHash("sha256").update(data).digest("hex");
-export const read = (filename) => JSON.parse(fs.readFileSync(filename, "utf8"));
-export function save(filename, value) {
-  fs.mkdirSync(path.dirname(filename), { recursive: true, mode: 0o700 });
-  fs.writeFileSync(filename, JSON.stringify(value, null, 2) + "\n", {
-    mode: 0o600,
-  });
-}
+
+
 export function localOrigin(value) {
   const u = new URL(value);
   if (
@@ -157,9 +157,12 @@ export async function prepare(root, { cache = CACHE, fetcher = fetch } = {}) {
     throw Error("工具与缓存必须放项目之外");
   fs.mkdirSync(run, { recursive: true, mode: 0o700 });
   fs.chmodSync(run, 0o700);
+  const identity = projectIdentity(root);
   const state = {
     id,
     root,
+    projectIdentity: identity,
+    projectKey: projectKey(identity),
     project: `sonar-fix-local-${id}`,
     server: `sfl-${id}-server`,
     proxy: `sfl-${id}-access`,
@@ -296,7 +299,7 @@ export async function prepare(root, { cache = CACHE, fetcher = fetch } = {}) {
     save(path.join(run, "online-read-audit.json"), audit);
   }
 }
-export function localClient(origin, token, fetcher = fetch) {
+export function localClient(origin, token, fetcher = fetch, signal) {
   origin = localOrigin(origin);
   return async (endpoint, params = {}, post = false, form = null) => {
     if (
@@ -313,6 +316,7 @@ export function localClient(origin, token, fetcher = fetch) {
         query.append(key, item);
     if (!post) u.search = query;
     let r;
+    const request = timeoutSignal(signal, 30000);
     try {
       r = await fetcher(u, {
         method: post ? "POST" : "GET",
@@ -324,23 +328,22 @@ export function localClient(origin, token, fetcher = fetch) {
         },
         body: post ? form || query : undefined,
         redirect: "error",
-        signal: AbortSignal.timeout(30000),
+        signal: request.signal,
       });
-    } catch {
+      if (!r.ok) {
+        const setting = endpoint === "/api/settings/set" && /^sonar\.[a-zA-Z0-9_.]+$/.test(params.key)
+          ? `，配置 ${params.key}，作用域 ${params.component ? "project" : "global"}` : "";
+        throw Error(`本机 ${u.pathname}: HTTP ${r.status}${setting}`);
+      }
+      const text = await r.text();
+      throwIfAborted(signal);
+      try { return JSON.parse(text); } catch { return text; }
+    } catch (error) {
+      if (signal?.aborted) throw interruptionError(signal);
+      if (error.message?.startsWith(`本机 ${u.pathname}: HTTP`)) throw error;
       throw Error(`本机 ${u.pathname} 请求失败，凭据与正文未输出`);
-    }
-    if (!r.ok) {
-      // 只报告已知结构的配置 key 和作用域，不输出可能包含凭据的响应正文或值。
-      const setting = endpoint === "/api/settings/set" && /^sonar\.[a-zA-Z0-9_.]+$/.test(params.key)
-        ? `，配置 ${params.key}，作用域 ${params.component ? "project" : "global"}`
-        : "";
-      throw Error(`本机 ${u.pathname}: HTTP ${r.status}${setting}`);
-    }
-    const text = await r.text();
-    try {
-      return JSON.parse(text);
-    } catch {
-      return text;
+    } finally {
+      request.dispose();
     }
   };
 }
@@ -367,7 +370,7 @@ export async function configureGate(api, gateName, conditions, project) {
     true,
   );
 }
-export async function bootstrap(run, origin) {
+export async function bootstrap(run, origin, signal) {
   const state = read(path.join(run, "state.json"));
   origin = localOrigin(origin);
   if (fs.existsSync(path.join(run, "credentials.json")))
@@ -377,6 +380,8 @@ export async function bootstrap(run, origin) {
   let api = localClient(
     origin,
     "Basic " + Buffer.from("admin:admin").toString("base64"),
+    fetch,
+    signal,
   );
   const status = await api("/api/system/status");
   if (status.status !== "UP" || status.version !== state.version)
@@ -389,6 +394,8 @@ export async function bootstrap(run, origin) {
   api = localClient(
     origin,
     "Basic " + Buffer.from("admin:" + password).toString("base64"),
+    fetch,
+    signal,
   );
   const { token } = await api(
     "/api/user_tokens/generate",
@@ -397,7 +404,7 @@ export async function bootstrap(run, origin) {
   );
   if (!token) throw Error("本机 token 生成失败");
   save(path.join(run, "credentials.json"), { origin, token });
-  api = localClient(origin, "Bearer " + token);
+  api = localClient(origin, "Bearer " + token, fetch, signal);
   await api(
     "/api/projects/create",
     {
@@ -515,10 +522,10 @@ export async function pages(get, endpoint, params, field) {
   }
   throw Error("本机分页超过限制");
 }
-export async function collectLocal(run, { fetcher = fetch } = {}) {
+export async function collectLocal(run, { fetcher = fetch, signal } = {}) {
   const state = read(path.join(run, "state.json"));
   const c = read(path.join(run, "credentials.json"));
-  const api = localClient(c.origin, "Bearer " + c.token, fetcher);
+  const api = localClient(c.origin, "Bearer " + c.token, fetcher, signal);
   const before = await api("/api/ce/component", { component: state.project });
   if (
     before.current?.status !== "SUCCESS" ||
@@ -602,74 +609,113 @@ export function normalizeLcov(data, root, files) {
   if (!count || inRecord) throw Error("LCOV 不完整：缺少记录或终止标记");
   return Buffer.from(result);
 }
-export async function generateCoverage(run, report, command) {
-  const state = read(path.join(run, "state.json"));
-  const receipt = path.join(run, "coverage-receipt.json");
-  // 新尝试先使旧凭证失效；任一阶段失败都不能让 Scanner 继续复用旧报告。
-  fs.rmSync(receipt, { force: true });
-  if (!command.length || !checkSnapshot(run))
-    throw Error("缺少覆盖率命令或源码已经变化");
-  const src = path.resolve(state.root, report);
-  const previousReport = fs.existsSync(src)
-    ? fs.statSync(src, { bigint: true })
-    : null;
-  const started = Date.now();
-  const log = fs.openSync(path.join(run, "coverage.log"), "w", 0o600);
-  const env = { ...process.env };
-  delete env.SONAR_TOKEN;
-  delete env.SONAR_HOST_URL;
-  let code;
+export async function generateCoverage(run, report, command, signal) {
+  const lease = captureRunLease(run);
+  const controller = new AbortController();
+  const abort = (name) => {
+    const error = Error(`覆盖率命令被${name === "SIGINT" ? "用户中断" : "终止"}`);
+    error.signal = name;
+    controller.abort(error);
+  };
+  const onSigint = () => abort("SIGINT"), onSigterm = () => abort("SIGTERM");
+  const onAbort = () => abort(signal?.reason?.signal || "SIGTERM");
+  process.on("SIGINT", onSigint);
+  process.on("SIGTERM", onSigterm);
+  signal?.addEventListener("abort", onAbort, { once: true });
+  if (signal?.aborted) onAbort();
   try {
-    code = await new Promise((resolve, reject) => {
-      const child = spawn(command[0], command.slice(1), {
-        cwd: state.root,
-        env,
-        stdio: ["ignore", log, log],
-      });
-      child.on("error", () => reject(Error("覆盖率命令无法启动")));
-      child.on("exit", resolve);
+    const state = read(path.join(run, "state.json"));
+    const receipt = path.join(run, "coverage-receipt.json");
+    // 新尝试先使旧凭证失效；任一阶段失败都不能让 Scanner 继续复用旧报告。
+    fs.rmSync(receipt, { force: true });
+    throwIfAborted(controller.signal);
+    if (!command.length || !checkSnapshot(run))
+      throw Error("缺少覆盖率命令或源码已经变化");
+    const src = path.resolve(state.root, report);
+    const previousReport = fs.existsSync(src)
+      ? fs.statSync(src, { bigint: true })
+      : null;
+    const started = Date.now();
+    const log = fs.openSync(path.join(run, "coverage.log"), "w", 0o600);
+    const env = { ...process.env };
+    delete env.SONAR_TOKEN;
+    delete env.SONAR_HOST_URL;
+    let code;
+    try {
+      ({ code } = await runChild(command[0], command.slice(1), {
+        cwd: state.root, env, stdio: ["ignore", log, log], signal: controller.signal,
+      }));
+    } catch (error) {
+      if (controller.signal.aborted) throw interruptionError(controller.signal);
+      throw Error("覆盖率命令无法启动或终止失败");
+    } finally {
+      fs.closeSync(log);
+    }
+    if (code !== 0)
+      throw Error("覆盖率命令失败；查看个人目录 coverage.log，不导入旧报告");
+    if (!checkSnapshot(run))
+      throw Error("覆盖率执行期间源码变化；不导入报告，重新采集或报告范围缺口");
+    if (!fs.existsSync(src)) throw Error("未生成新的 LCOV，拒绝复用陈旧报告");
+    const currentReport = fs.statSync(src, { bigint: true });
+    // 内容可以完全相同，但文件必须在本次尝试中重写或被原子替换。
+    // mtime 使用纳秒精度；权限等属性变化导致的 ctime 更新不算重新生成。
+    if (
+      Number(currentReport.mtimeMs) < started - 2000 ||
+      (previousReport &&
+        ["dev", "ino", "size", "mtimeNs"].every(
+          (key) => previousReport[key] === currentReport[key],
+        ))
+    )
+      throw Error("LCOV 未重新生成，拒绝复用陈旧报告");
+    const data = normalizeLcov(
+      fs.readFileSync(src),
+      state.root,
+      read(path.join(run, "source-manifest.json")).files,
+    );
+    fs.writeFileSync(path.join(run, "source/coverage/lcov.info"), data, {
+      mode: 0o600,
     });
+    save(receipt, {
+      sourceFingerprint: read(path.join(run, "source-manifest.json"))
+        .sourceFingerprint,
+      reportHash: hash(data),
+      completedAt: new Date().toISOString(),
+      command,
+    });
+  } catch (error) {
+    // Coverage does not acquire the Sonar lock, but a failed coverage phase
+    // must still tear down a run that was already started.  Dynamic import
+    // avoids a module cycle (runtime.mjs imports local.mjs).
+    try {
+      const { cleanupRun } = await import("./runtime.mjs");
+      await cleanupRun(run, lease);
+    } catch (cleanupError) {
+      throw Error(`${error.message}；当前 run 清理失败：${cleanupError.message}`);
+    }
+    throw error;
   } finally {
-    fs.closeSync(log);
+    process.removeListener("SIGINT", onSigint);
+    process.removeListener("SIGTERM", onSigterm);
+    signal?.removeEventListener("abort", onAbort);
   }
-  if (code !== 0)
-    throw Error("覆盖率命令失败；查看个人目录 coverage.log，不导入旧报告");
-  if (!checkSnapshot(run))
-    throw Error("覆盖率执行期间源码变化；不导入报告，重新采集或报告范围缺口");
-  if (!fs.existsSync(src)) throw Error("未生成新的 LCOV，拒绝复用陈旧报告");
-  const currentReport = fs.statSync(src, { bigint: true });
-  // 内容可以完全相同，但文件必须在本次尝试中重写或被原子替换。
-  // mtime 使用纳秒精度；权限等属性变化导致的 ctime 更新不算重新生成。
-  if (
-    Number(currentReport.mtimeMs) < started - 2000 ||
-    (previousReport &&
-      ["dev", "ino", "size", "mtimeNs"].every(
-        (key) => previousReport[key] === currentReport[key],
-      ))
-  )
-    throw Error("LCOV 未重新生成，拒绝复用陈旧报告");
-  const data = normalizeLcov(
-    fs.readFileSync(src),
-    state.root,
-    read(path.join(run, "source-manifest.json")).files,
-  );
-  fs.writeFileSync(path.join(run, "source/coverage/lcov.info"), data, {
-    mode: 0o600,
-  });
-  save(receipt, {
-    sourceFingerprint: read(path.join(run, "source-manifest.json"))
-      .sourceFingerprint,
-    reportHash: hash(data),
-    completedAt: new Date().toISOString(),
-    command,
-  });
 }
 if (
   process.argv[1] &&
   import.meta.url === pathToFileURL(fs.realpathSync(process.argv[1])).href
 ) {
+  const [mode, arg, ...rest] = process.argv.slice(2);
+  const controller = new AbortController();
+  const interrupt = (signal) => {
+    const error = Error(`收到 ${signal}，停止当前操作`);
+    error.signal = signal;
+    controller.abort(error);
+  };
+  const onSigint = () => interrupt("SIGINT"), onSigterm = () => interrupt("SIGTERM");
+  if (mode === "collect" || mode === "coverage") {
+    process.on("SIGINT", onSigint);
+    process.on("SIGTERM", onSigterm);
+  }
   try {
-    const [mode, arg, ...rest] = process.argv.slice(2);
     if (mode === "prepare") console.log(await prepare(arg || process.cwd()));
     else if (mode === "bootstrap") await bootstrap(arg, rest[0]);
     else if (mode === "check") {
@@ -677,9 +723,21 @@ if (
     } else if (mode === "coverage") {
       if (rest[1] !== "--")
         throw Error("格式：coverage <run> <lcov-path> -- <command...>");
-      await generateCoverage(arg, rest[0], rest.slice(2));
+      await generateCoverage(arg, rest[0], rest.slice(2), controller.signal);
     } else if (mode === "collect") {
-      const r = await collectLocal(arg);
+      const lease = captureRunLease(arg);
+      let r;
+      try {
+        r = await collectLocal(arg, { signal: controller.signal });
+      } catch (error) {
+        try {
+          const { cleanupRun } = await import("./runtime.mjs");
+          await cleanupRun(arg, lease);
+        } catch (cleanupError) {
+          throw Error(`${error.message}；当前 run 清理失败：${cleanupError.message}`);
+        }
+        throw error;
+      }
       console.log(
         JSON.stringify({
           report: path.join(arg, "result.json"),
@@ -694,6 +752,9 @@ if (
       throw Error("命令：prepare | bootstrap | check | coverage | collect");
   } catch (e) {
     console.error(e.message);
-    process.exitCode = 1;
+    process.exitCode = controller.signal.aborted ? (controller.signal.reason.signal === "SIGINT" ? 130 : 143) : 1;
+  } finally {
+    process.removeListener("SIGINT", onSigint);
+    process.removeListener("SIGTERM", onSigterm);
   }
 }

@@ -4,7 +4,7 @@ import fs from "node:fs";
 import os from "node:os";
 import http from "node:http";
 import path from "node:path";
-import { execFileSync } from "node:child_process";
+import { execFileSync, spawn } from "node:child_process";
 import { fileURLToPath } from "node:url";
 import {
   onlineClient,
@@ -35,14 +35,14 @@ function fixture(t) {
   save(path.join(run, "source-manifest.json"), fingerprint(root));
   return { base, root, run };
 }
-test("DOCKER_HOST 远端覆盖项在接触 Docker 前被拒绝", (t) => {
+test("DOCKER_HOST 远端覆盖项在接触 Docker 前被拒绝", async (t) => {
   const before = process.env.DOCKER_HOST;
   t.after(() => {
     if (before === undefined) delete process.env.DOCKER_HOST;
     else process.env.DOCKER_HOST = before;
   });
   process.env.DOCKER_HOST = "tcp://remote.example:2376";
-  assert.throws(() => stop("/nonexistent-run"), /DOCKER_HOST/);
+  await assert.rejects(() => stop("/nonexistent-run"), /DOCKER_HOST/);
 });
 test("线上客户端始终 GET，禁止重定向，拒绝其他主机", async () => {
   let request;
@@ -193,6 +193,30 @@ test("覆盖率命令失败时不会给旧报告签发有效凭证", async (t) =
     generateCoverage(run, report, [process.execPath, "-e", "process.exit(1)"]),
     /命令失败/,
   );
+  assert.equal(fs.existsSync(path.join(run, "coverage-receipt.json")), false);
+});
+test("覆盖率子进程忽略终止信号时超时强杀并执行清理", async (t) => {
+  const { base, run } = fixture(t);
+  const report = path.join(base, "interrupted.info");
+  const controller = new AbortController();
+  const started = Date.now();
+  const pending = generateCoverage(
+    run,
+    report,
+    [
+      process.execPath,
+      "-e",
+      'process.on("SIGTERM",()=>{});setInterval(()=>{},1000)',
+    ],
+    controller.signal,
+  );
+  setTimeout(() => {
+    const reason = Error("测试中断");
+    reason.signal = "SIGTERM";
+    controller.abort(reason);
+  }, 50);
+  await assert.rejects(pending, /覆盖率命令被终止/);
+  assert.ok(Date.now() - started < 3000);
   assert.equal(fs.existsSync(path.join(run, "coverage-receipt.json")), false);
 });
 for (const [name, data] of [
@@ -607,5 +631,87 @@ test("只改变旧 LCOV 权限不能作为重新生成的证据", async (t) => {
     ]),
     /重新生成|未生成新的 LCOV/,
   );
+  assert.equal(fs.existsSync(path.join(run, "coverage-receipt.json")), false);
+});
+
+test("响应头已返回但正文未完成时仍能取消本机 API", async (t) => {
+  let bodyStarted;
+  const started = new Promise((resolve) => { bodyStarted = resolve; });
+  const server = http.createServer((_, response) => {
+    response.writeHead(200, { "Content-Type": "application/json" });
+    response.write('{"status":');
+    bodyStarted();
+  });
+  await new Promise((resolve) => server.listen(0, "127.0.0.1", resolve));
+  t.after(() => { server.closeAllConnections(); server.close(); });
+  const controller = new AbortController();
+  const api = localClient(`http://127.0.0.1:${server.address().port}`, "Bearer test", fetch, controller.signal);
+  const pending = api("/api/system/status");
+  const rejected = assert.rejects(pending, /body-cancelled/);
+  await started;
+  await new Promise((resolve) => setTimeout(resolve, 30));
+  controller.abort(Error("body-cancelled"));
+  await rejected;
+});
+
+test("HTTP 错误正文停滞时释放连接，保留脱敏错误并正常退出", { timeout: 8000 }, async (t) => {
+  let responseClosed;
+  const closed = new Promise((resolve) => { responseClosed = resolve; });
+  const server = http.createServer((_, response) => {
+    response.once("close", responseClosed);
+    response.writeHead(503, { "Content-Type": "application/json" });
+    response.write('{"secret":"response-token');
+  });
+  await new Promise((resolve) => server.listen(0, "127.0.0.1", resolve));
+  t.after(() => { server.closeAllConnections(); server.close(); });
+  const clientModule = new URL("../scripts/local.mjs", import.meta.url).href;
+  const origin = `http://127.0.0.1:${server.address().port}`;
+  const script = `
+    import { localClient } from ${JSON.stringify(clientModule)};
+    try {
+      await localClient(${JSON.stringify(origin)}, "Bearer private-test-token")("/api/system/status");
+    } catch (error) {
+      console.error(error.message);
+      process.exitCode = 1;
+    }
+  `;
+  const child = spawn(process.execPath, ["--input-type=module", "-e", script], {
+    stdio: ["ignore", "pipe", "pipe"], timeout: 4000, killSignal: "SIGKILL",
+  });
+  t.after(() => { if (child.exitCode === null && child.signalCode === null) child.kill("SIGKILL"); });
+  let stdout = "", stderr = "";
+  child.stdout.on("data", (chunk) => { stdout += chunk; });
+  child.stderr.on("data", (chunk) => { stderr += chunk; });
+  const result = await new Promise((resolve, reject) => {
+    child.once("error", reject);
+    child.once("close", (code, signal) => resolve({ code, signal }));
+  });
+  assert.equal(result.signal, null, "client must exit without forced termination");
+  assert.equal(result.code, 1, stderr);
+  assert.equal(stdout, "");
+  assert.equal(stderr.trim(), "本机 /api/system/status: HTTP 503");
+  await closed;
+});
+
+test("覆盖率启动器退出后仍清理忽略 SIGTERM 的后代进程", async (t) => {
+  const { base, run } = fixture(t);
+  const ready = path.join(base, "worker.pid");
+  const worker = `require('node:fs').writeFileSync(${JSON.stringify(ready)},String(process.pid));process.on('SIGTERM',()=>{});setInterval(()=>{},1000);`;
+  const launcher = `require('node:child_process').spawn(process.execPath,['-e',${JSON.stringify(worker)}],{stdio:'ignore'});`;
+  const controller = new AbortController();
+  const pending = generateCoverage(run, path.join(base, "report.info"), [process.execPath, "-e", launcher], controller.signal);
+  const rejected = assert.rejects(pending, /覆盖率命令被终止/);
+  const deadline = Date.now() + 3000;
+  while (!fs.existsSync(ready) && Date.now() < deadline)
+    await new Promise((resolve) => setTimeout(resolve, 10));
+  assert.ok(fs.existsSync(ready), "worker started");
+  const pid = Number(fs.readFileSync(ready));
+  t.after(() => { try { process.kill(pid, "SIGKILL"); } catch {} });
+  controller.abort(Error("cancel"));
+  await rejected;
+  // A killed orphan can briefly remain as a zombie until the OS reaps it.
+  let state = "";
+  try { state = execFileSync("ps", ["-o", "stat=", "-p", String(pid)], { encoding: "utf8" }).trim(); } catch {}
+  assert.ok(!state || state.startsWith("Z"), `worker still running: ${state}`);
   assert.equal(fs.existsSync(path.join(run, "coverage-receipt.json")), false);
 });
